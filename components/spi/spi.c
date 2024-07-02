@@ -1,13 +1,12 @@
 #include "spi.h"
 
+static const char* TAG = "==> spi-phy";
 
-const char *SPI_TAG = "==> spi-phy";
-
-static SemaphoreHandle_t xTxSemaphore = NULL;
-static spi_device_handle_t xTxHandle = {0};
+static SemaphoreHandle_t s_tx_semaphore_handle = NULL;
+static spi_device_handle_t s_spi_device_handle = {0};
 
 
-esp_err_t xSPIRxInit() {
+static esp_err_t spi_rx_init() {
     //Configuration for the SPI bus
     spi_bus_config_t buscfg={
         .mosi_io_num=RECEIVER_GPIO_MOSI,
@@ -32,7 +31,7 @@ esp_err_t xSPIRxInit() {
     return ESP_OK;
 }
 
-esp_err_t xSPITxInit() {
+static esp_err_t spi_tx_init() {
     //Configuration for the SPI bus
     spi_bus_config_t buscfg={
         .mosi_io_num=SENDER_GPIO_MOSI,
@@ -57,37 +56,37 @@ esp_err_t xSPITxInit() {
 
     //Initialize the SPI bus and add the device we want to send stuff to.
     ESP_ERROR_CHECK(spi_bus_initialize(SPI_SENDER_HOST, &buscfg, SPI_DMA_CH_AUTO));
-    ESP_ERROR_CHECK(spi_bus_add_device(SPI_SENDER_HOST, &devcfg, &xTxHandle));
-    xTxSemaphore = xSemaphoreCreateMutex();
+    ESP_ERROR_CHECK(spi_bus_add_device(SPI_SENDER_HOST, &devcfg, &s_spi_device_handle));
+    s_tx_semaphore_handle = xSemaphoreCreateMutex();
     return ESP_OK;
 }
 
-esp_err_t xSPIInit(void) {
-    ESP_ERROR_CHECK(xSPIRxInit());
-    ESP_ERROR_CHECK(xSPITxInit());
+esp_err_t spi_init(void) {
+    ESP_ERROR_CHECK(spi_rx_init());
+    ESP_ERROR_CHECK(spi_tx_init());
     return ESP_OK;
 }
 
-esp_err_t xSPITransmit(SPIPayload_t *p) {
+esp_err_t spi_transmit(void *p, size_t len) {
     spi_transaction_t t = {
-        .length = (sizeof(SPIPayload_t)) * 8,
-        .tx_buffer = (void *) p,
+        .length = len * 8,
+        .tx_buffer = p,
     };
-    if( xSemaphoreTake( xTxSemaphore, ( TickType_t ) 10 ) == pdTRUE )
+    if( xSemaphoreTake( s_tx_semaphore_handle, ( TickType_t ) 10 ) == pdTRUE )
     {
-        ESP_ERROR_CHECK(spi_device_transmit(xTxHandle, &t));
-        xSemaphoreGive( xTxSemaphore );
+        ESP_ERROR_CHECK(spi_device_transmit(s_spi_device_handle, &t));
+        xSemaphoreGive( s_tx_semaphore_handle );
         return ESP_OK;
     }
-    ESP_LOGW(SPI_TAG, "Could not adquire Mutex. Will retry...");
+    ESP_LOGE(TAG, "Could not adquire Mutex...");
     return ESP_FAIL;
 }
 
-esp_err_t xSPIReceive(SPIPayload_t *p)
+esp_err_t spi_receive(void *p, size_t len)
 {
     spi_slave_transaction_t t = {
-        .rx_buffer = (void *) p,
-        .length = (sizeof(SPIPayload_t)) * 8,
+        .rx_buffer = p,
+        .length = len * 8,
     };
     ESP_ERROR_CHECK(spi_slave_transmit(SPI_RECEIVER_HOST, &t, portMAX_DELAY));
     return ESP_OK;
