@@ -1,17 +1,27 @@
 #include "spi_internal.h"
 
 static const char* TAG = "==> spi-internal";
+static SemaphoreHandle_t s_broadcast_semaphore_handle = NULL;
+static QueueHandle_t s_broadcast_queue = NULL;
 
-esp_err_t spi_forward(spi_payload_t *p)
+esp_err_t spi_internal_init( void )
 {
-    if (p->ttl <= 0) {
-        ESP_LOGW(TAG, "Discarding packet id '%i' ('%s') due to TTL. Won't forward.", p->id, p->buffer);
-        return ESP_OK;
+    s_broadcast_semaphore_handle = xSemaphoreCreateMutex();
+    if( s_broadcast_semaphore_handle == NULL )
+    {
+        ESP_LOGE(TAG, "an error ocurred creating mutex.");
+        return ESP_FAIL;
     }
-    p->ttl--;
-    ESP_LOGI(TAG, "Forwarding packet id '%i' with dest '%i' (TTL=%i).", p->id, p->dst_device_id, p->ttl);
-    return spi_transmit(p, sizeof(spi_payload_t));
+
+    s_broadcast_queue = xQueueCreate(1, sizeof(spi_payload_id_t));
+    if( s_broadcast_queue == NULL )
+    {
+        ESP_LOGE(TAG, "an error ocurred creating queue.");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
 }
+
 
 static esp_err_t spi_internal_process(spi_payload_t *p)
 {
@@ -29,47 +39,55 @@ static esp_err_t spi_internal_broadcast(const void *buffer, uint16_t len){
         .len = len,
     };
     memccpy(p.buffer, buffer, len, SPI_PAYLOAD_BUFFER_SIZE);
-    ESP_ERROR_CHECK(spi_transmit(&p, sizeof(spi_payload_t)));
-
-    // wait for reception
-    return ESP_OK;
+    return spi_payload_transmit(&p);
 }
 
 bool broadcast_to_siblings(const void *msg, uint16_t len)
 {
-    esp_err_t rc = spi_internal_broadcast(msg, len);
-    return rc == ESP_OK? true : false;
+    if( xSemaphoreTake( s_broadcast_semaphore_handle, ( TickType_t ) 10 ) == pdTRUE )
+    {
+        esp_err_t rc = spi_internal_broadcast(msg, len);
+        uint8_t id;
+        if( xQueueReceive( s_broadcast_queue, &( id ), ( TickType_t ) 10 ) == pdPASS )
+        {
+            xSemaphoreGive( s_broadcast_semaphore_handle );
+            return rc == ESP_OK ? true : false;
+        }
+        
+        return false;
+    }
+    ESP_LOGE(TAG, "Could not adquire Mutex...");
+    return false;
 }
 
 static esp_err_t spi_internal_broadcast_handler(spi_payload_t *p)
 {
     // broadcast origin
-    if (p->src_device_id == device_config_get_id())
+    if (spi_payload_is_from_device(p))
     {
+        xQueueSend(s_broadcast_queue, (void *) &(p->id), ( TickType_t ) 0 );
         ESP_LOGI(TAG, "Broadcast complete for packet id '%i'.", p->id);
-        // notify broadcast complete
         return ESP_OK;
     }
     else
     {
         ESP_ERROR_CHECK(spi_internal_process(p));
-        return spi_forward(p);
+        return spi_payload_forward(p);
     }
 }
 
 esp_err_t spi_internal_handler(spi_payload_t *p)
 {
-    if (p->dst_device_id == DEVICE_ID_ALL)  // broadcast
+    if (spi_payload_is_broadcast(p))  // broadcast
     {
         return spi_internal_broadcast_handler(p);
     }
-    else if ((p->dst_device_id == device_config_get_id()) \
-        || (p->dst_device_id == DEVICE_ID_ANY))  // payload for me
+    else if (spi_payload_is_for_device(p))  // payload for me
     {
         return spi_internal_process(p);
     }
     else  // not for me, forwarding
     {
-        return spi_forward(p);        
+        return spi_payload_forward(p);        
     }
 }

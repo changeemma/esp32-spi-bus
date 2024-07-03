@@ -1,26 +1,26 @@
 #include "spi_netif.h"
 
+static const char* TAG = "==> spi-netif";
 
 static esp_err_t spi_netif_process(spi_payload_t *p)
 {
-    printf("esp_netif_receive(netif, %s, %i, NULL)\n", p->buffer, p->len);
+    printf("call esp_netif_receive(netif, %s, %i, NULL)\n", p->buffer, p->len);
     return ESP_OK;
 }
 
 esp_err_t spi_netif_handler(spi_payload_t *p)
 {
-    if (p->src_device_id == device_config_get_id())  // bounced package
+    if (spi_payload_is_from_device(p))  // bounced package
     {
-        printf("Discard payload\n");
+        ESP_LOGW(TAG, "Discarding bounced packet. id '%i' ('%s').", p->id, p->buffer);
         return ESP_OK;
     }
-    else if ((p->dst_device_id == device_config_get_id()) \
-        || (p->dst_device_id == DEVICE_ID_ANY))  // payload for me
+    else if (spi_payload_is_for_device(p))  // payload for me
     {
         return spi_netif_process(p);
     }
     else  // not for me, forwarding
     {
-        return spi_forward(p);        
+        return spi_payload_forward(p);        
     }
 }

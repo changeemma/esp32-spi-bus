@@ -1,6 +1,6 @@
 #pragma once
 
-#include "spi.h"
+#include "spi_payload.h"
 #include "spi_internal.h"
 
 #ifdef __cplusplus

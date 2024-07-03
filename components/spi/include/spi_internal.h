@@ -1,6 +1,6 @@
 #pragma once
 
-#include "spi.h"
+#include "spi_payload.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -8,7 +8,7 @@ extern "C" {
 
 bool broadcast_to_siblings(const void *msg, uint16_t len);
 
-esp_err_t spi_forward(spi_payload_t *p);
+esp_err_t spi_internal_init( void );
 
 esp_err_t spi_internal_handler(spi_payload_t *p);
 
